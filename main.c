@@ -1,3 +1,10 @@
+/*
+ * expr    -> mul (("+" | "-") mul)*
+ * mul     -> unary (("*" | "/") unary)*
+ * unary   -> ("+" | "-") unary | primary
+ * primary -> "(" expr ")" | NUMBER
+ */
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +17,7 @@ typedef enum {
     ND_ADD,
     ND_SUB,
     ND_MUL,
+    ND_DIV,
     ND_NEG
 } NodeKind;
 
@@ -18,6 +26,7 @@ typedef enum {
     TK_ADD,
     TK_SUB,
     TK_MUL,
+    TK_DIV,
     TK_OPA,
     TK_CPA,
     TK_EOF
@@ -42,11 +51,11 @@ typedef struct {
 } Parser;
 
 Node *expr(Parser *p);
-Node *term(Parser *p);
+Node *unary(Parser *p);
 Node *primary(Parser *p);
 
 bool isopr(char c) {
-    return c == '+' || c == '-' || c == '*';
+    return c == '+' || c == '-' || c == '*' || c == '/';
 }
 
 bool ispar(char c) {
@@ -91,6 +100,7 @@ const char *kind_name(TokenKind k) {
         case TK_ADD: return "'+'";
         case TK_SUB: return "'-'";
         case TK_MUL: return "'*'";
+        case TK_DIV: return "'/'";
         case TK_OPA: return "'('";
         case TK_CPA: return "')'";
         case TK_EOF: return "end of input";
@@ -106,17 +116,26 @@ Token *expect(Parser *p, TokenKind kind) { if (!match(p, kind)) { Token *t = pee
     return &p->toks[p->pos - 1];
 }
 
-Node *term(Parser *p) {
-    if (match(p, TK_ADD)) return term(p);
-    if (match(p, TK_SUB)) return new_unary(ND_NEG, term(p));
+Node *unary(Parser *p) {
+    if (match(p, TK_ADD)) return unary(p);
+    if (match(p, TK_SUB)) return new_unary(ND_NEG, unary(p));
     return primary(p);
 }
 
-Node *expr(Parser *p) {
-    Node *node = term(p);
+Node *mul(Parser *p) {
+    Node *node = unary(p);
     for (;;) {
-        if (match(p, TK_ADD)) node = new_binary(ND_ADD, node, term(p));
-        else if (match(p, TK_SUB)) node = new_binary(ND_SUB, node, term(p));
+        if (match(p, TK_MUL)) node = new_binary(ND_MUL, node, unary(p));
+        else if (match(p, TK_DIV)) node = new_binary(ND_DIV, node, unary(p));
+        else return node;
+    }
+}
+
+Node *expr(Parser *p) {
+    Node *node = mul(p);
+    for (;;) {
+        if (match(p, TK_ADD)) node = new_binary(ND_ADD, node, mul(p));
+        else if (match(p, TK_SUB)) node = new_binary(ND_SUB, node, mul(p));
         else return node;
     }
 }
@@ -143,6 +162,7 @@ void dump(Node *n) {
         case ND_INT: printf("%d", n->value); return;
         case ND_ADD: printf("(+ "); break;
         case ND_SUB: printf("(- "); break;
+        case ND_MUL: printf("(* "); break;
         case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
         default: return;
     }
@@ -157,6 +177,8 @@ int eval(Node *n) {
         case ND_INT: return n->value;
         case ND_ADD: return eval(n->lhs) + eval(n->rhs);
         case ND_SUB: return eval(n->lhs) - eval(n->rhs);
+        case ND_MUL: return eval(n->lhs) * eval(n->rhs);
+        case ND_DIV: return eval(n->lhs) / eval(n->rhs);
         case ND_NEG: return -eval(n->lhs);
         default: abort();
     }
@@ -245,6 +267,9 @@ int main(int argc, char *argv[]) {
                 case '*':
                     tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MUL, .line_idx = line_idx };
                     break;
+                case '/':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx };
+                    break;
             }
         } else if (ispar(c)) {
             switch (c) {
@@ -284,6 +309,7 @@ int main(int argc, char *argv[]) {
                 case TK_ADD: printf("L%zu  ADD\n", tkn_array[i].line_idx); break;
                 case TK_SUB: printf("L%zu  SUB\n", tkn_array[i].line_idx); break;
                 case TK_MUL: printf("L%zu  MUL\n", tkn_array[i].line_idx); break;
+                case TK_DIV: printf("L%zu  DIV\n", tkn_array[i].line_idx); break;
                 case TK_OPA: printf("L%zu  OPA\n", tkn_array[i].line_idx); break;
                 case TK_CPA: printf("L%zu  CPA\n", tkn_array[i].line_idx); break;
                 default: break;
