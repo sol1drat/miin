@@ -225,8 +225,8 @@ int eval(Node *n) {
         }
         case ND_PWR: {
             int rhs = eval(n->rhs);
-            if (rhs < 1) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: exponent less than one\n");
+            if (rhs < 0) {
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: exponent less than zero\n");
                 exit(1);
             }
             return ipow(eval(n->lhs), rhs); 
@@ -236,25 +236,20 @@ int eval(Node *n) {
     }
 }
 
-int main(int argc, char *argv[]) {
-    if (argc == 1) {
-        printf("no input file\n");
-        return 1;
-    }
-
-    FILE *fp = fopen(argv[1], "rb");
+char *srcread(const char *file_path) {
+    FILE *fp = fopen(file_path, "rb");
     if (fp == NULL) {
-        perror("error opening file");
-        return 1;
+        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mopening file\x1b\[1;0m");
+        return NULL;
     }
 
     fseek(fp, 0, SEEK_END);
 
     long size = ftell(fp);
     if (size == -1) {
-        perror("error getting file size");
+        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mgetting file size\x1b\[0m");
         fclose(fp);
-        return 1;
+        return NULL;
     }
     size_t file_size = (size_t)size;
 
@@ -262,21 +257,67 @@ int main(int argc, char *argv[]) {
 
     char *src_buffer = malloc(file_size + 1);
     if (src_buffer == NULL) {
-        perror("error allocating memory");
+        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mallocating memory\x1b\[0m");
         fclose(fp);
-        return 1;
+        return NULL;
     }
 
     size_t bytes_read = fread(src_buffer, 1, file_size, fp);
     if (bytes_read != file_size) {
-        fprintf(stderr, "error reading file\n");
+        fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mreading file\x1b\[0m\n");
         free(src_buffer);
         fclose(fp);
-        return 1;
+        return NULL;
     }
 
     src_buffer[file_size] = '\0';
     fclose(fp);
+    return src_buffer;
+}
+
+int main(int argc, char *argv[]) {
+    bool opt_lex = false;
+    bool opt_ast = false;
+    const char *src_file = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--lex") == 0) {
+            opt_lex = true;
+        } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
+            opt_ast = true;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            printf(
+                    "usage: miin [options] file\n"
+                    "\n"
+                    "miscellaneous interpreter\n"
+                    "\n"
+                    "options:\n"
+                    "  -l, --lex     print lexical tokens and exit\n"
+                    "  -a, --ast     print the abstract syntax tree and exit\n"
+                    "  -h, --help    show this help message and exit\n"
+                  );
+            return 0;
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: unknown option '%s'\n", argv[i]);
+            printf("use option '-h' or '--help' for help\n");
+            return 1;
+        } else if (src_file == NULL) {
+            src_file = argv[i];
+        } else {
+            fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: unexpected argument '%s'\n", argv[i]);
+            printf("use option '-h' or '--help' for help\n");
+            return 1;
+        }
+    }
+
+    if (src_file == NULL) {
+        fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: no input file\n");
+        printf("use option '-h' or '--help' for help\n");
+        return 1;
+    }
+
+    char *src_buffer = srcread(src_file);
+    if (src_buffer == NULL) return 1;
 
     Token tkn_array[64];
     size_t tkn_arr_idx = 0;
@@ -360,18 +401,18 @@ int main(int argc, char *argv[]) {
     tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
     free(src_buffer);
 
-    if (argc >= 3 && strcmp(argv[2], "--lex") == 0) {
+    if (opt_lex) {
         for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
             switch (tkn_array[i].kind) {
-                case TK_INT: printf("L%zu  INT  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
-                case TK_ADD: printf("L%zu  ADD  +\n", tkn_array[i].line_idx); break;
-                case TK_SUB: printf("L%zu  SUB  -\n", tkn_array[i].line_idx); break;
-                case TK_MUL: printf("L%zu  MUL  *\n", tkn_array[i].line_idx); break;
-                case TK_DIV: printf("L%zu  DIV  /\n", tkn_array[i].line_idx); break;
-                case TK_MOD: printf("L%zu  MOD  %%\n", tkn_array[i].line_idx); break;
-                case TK_PWR: printf("L%zu  PWR  ^\n", tkn_array[i].line_idx); break;
-                case TK_OPA: printf("L%zu  OPA  (\n", tkn_array[i].line_idx); break;
-                case TK_CPA: printf("L%zu  CPA  )\n", tkn_array[i].line_idx); break;
+                case TK_INT: printf("L%zu  \x1b\[1;37mINT\x1b\[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
+                case TK_ADD: printf("L%zu  \x1b\[1;37mADD\x1b\[0m  +\n", tkn_array[i].line_idx); break;
+                case TK_SUB: printf("L%zu  \x1b\[1;37mSUB\x1b\[0m  -\n", tkn_array[i].line_idx); break;
+                case TK_MUL: printf("L%zu  \x1b\[1;37mMUL\x1b\[0m  *\n", tkn_array[i].line_idx); break;
+                case TK_DIV: printf("L%zu  \x1b\[1;37mDIV\x1b\[0m  /\n", tkn_array[i].line_idx); break;
+                case TK_MOD: printf("L%zu  \x1b\[1;37mMOD\x1b\[0m  %%\n", tkn_array[i].line_idx); break;
+                case TK_PWR: printf("L%zu  \x1b\[1;37mPWR\x1b\[0m  ^\n", tkn_array[i].line_idx); break;
+                case TK_OPA: printf("L%zu  \x1b\[1;37mOPA\x1b\[0m  (\n", tkn_array[i].line_idx); break;
+                case TK_CPA: printf("L%zu  \x1b\[1;37mCPA\x1b\[0m  )\n", tkn_array[i].line_idx); break;
                 default: break;
             }
         }
@@ -380,7 +421,7 @@ int main(int argc, char *argv[]) {
 
     Node *ast = parse(tkn_array);
 
-    if (argc >= 3 && strcmp(argv[2], "--ast") == 0) {
+    if (opt_ast) {
         dump(ast);
         putchar('\n');
         return 0;

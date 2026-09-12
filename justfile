@@ -15,3 +15,6 @@ test_file := "test.mii"
 
 @ast: build
     ./{{binary}} {{test_file}} --ast
+
+@install: build
+    cp ./{{binary}} ~/.local/bin
