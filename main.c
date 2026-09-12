@@ -1,7 +1,8 @@
 /*
  * expr    -> mul (("+" | "-") mul)*
  * mul     -> unary (("*" | "/" | "%") unary)*
- * unary   -> ("+" | "-") unary | primary
+ * unary   -> ("+" | "-") unary | powr
+ * powr    -> primary ("^" powr)?
  * primary -> "(" expr ")" | NUMBER
  */
 
@@ -19,6 +20,7 @@ typedef enum {
     ND_MUL,
     ND_DIV,
     ND_MOD,
+    ND_PWR,
     ND_NEG
 } NodeKind;
 
@@ -29,6 +31,7 @@ typedef enum {
     TK_MUL,
     TK_DIV,
     TK_MOD,
+    TK_PWR,
     TK_OPA,
     TK_CPA,
     TK_EOF
@@ -57,7 +60,7 @@ Node *unary(Parser *p);
 Node *primary(Parser *p);
 
 bool isopr(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%';
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^';
 }
 
 bool ispar(char c) {
@@ -104,6 +107,7 @@ const char *kind_name(TokenKind k) {
         case TK_MUL: return "'*'";
         case TK_DIV: return "'/'";
         case TK_MOD: return "'%'";
+        case TK_PWR: return "'^'";
         case TK_OPA: return "'('";
         case TK_CPA: return "')'";
         case TK_EOF: return "end of input";
@@ -119,10 +123,16 @@ Token *expect(Parser *p, TokenKind kind) { if (!match(p, kind)) { Token *t = pee
     return &p->toks[p->pos - 1];
 }
 
+Node *powr(Parser *p) {
+    Node *node = primary(p);
+    if (match(p, TK_PWR)) return new_binary(ND_PWR, node, powr(p));
+    return node;
+}
+
 Node *unary(Parser *p) {
     if (match(p, TK_ADD)) return unary(p);
     if (match(p, TK_SUB)) return new_unary(ND_NEG, unary(p));
-    return primary(p);
+    return powr(p);
 }
 
 Node *mul(Parser *p) {
@@ -169,6 +179,7 @@ void dump(Node *n) {
         case ND_MUL: printf("(* "); break;
         case ND_DIV: printf("(/ "); break;
         case ND_MOD: printf("(%% "); break;
+        case ND_PWR: printf("(^ "); break;
         case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
         default: return;
     }
@@ -176,6 +187,18 @@ void dump(Node *n) {
     printf(" ");
     dump(n->rhs);
     printf(")");
+}
+
+int ipow(int base, int exp) {
+    int result = 1;
+    while (exp > 0) {
+        if (exp & 1)
+            result *= base;
+
+        base *= base;
+        exp >>= 1;
+    }
+    return result;
 }
 
 int eval(Node *n) {
@@ -199,6 +222,14 @@ int eval(Node *n) {
                 exit(1);
             }
             return eval(n->lhs) % rhs; 
+        }
+        case ND_PWR: {
+            int rhs = eval(n->rhs);
+            if (rhs < 1) {
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: exponent less than one\n");
+                exit(1);
+            }
+            return ipow(eval(n->lhs), rhs); 
         }
         case ND_NEG: return -eval(n->lhs);
         default: abort();
@@ -294,6 +325,9 @@ int main(int argc, char *argv[]) {
                 case '%':
                     tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx };
                     break;
+                case '^':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx };
+                    break;
             }
         } else if (ispar(c)) {
             switch (c) {
@@ -333,8 +367,9 @@ int main(int argc, char *argv[]) {
                 case TK_ADD: printf("L%zu  ADD  +\n", tkn_array[i].line_idx); break;
                 case TK_SUB: printf("L%zu  SUB  -\n", tkn_array[i].line_idx); break;
                 case TK_MUL: printf("L%zu  MUL  *\n", tkn_array[i].line_idx); break;
-                case TK_MOD: printf("L%zu  MOD  %%\n", tkn_array[i].line_idx); break;
                 case TK_DIV: printf("L%zu  DIV  /\n", tkn_array[i].line_idx); break;
+                case TK_MOD: printf("L%zu  MOD  %%\n", tkn_array[i].line_idx); break;
+                case TK_PWR: printf("L%zu  PWR  ^\n", tkn_array[i].line_idx); break;
                 case TK_OPA: printf("L%zu  OPA  (\n", tkn_array[i].line_idx); break;
                 case TK_CPA: printf("L%zu  CPA  )\n", tkn_array[i].line_idx); break;
                 default: break;
