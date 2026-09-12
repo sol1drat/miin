@@ -1,11 +1,17 @@
 compiler  := "gcc"
 flags     := "-Wall -Wextra -Werror"
-binary    := "inmi"
+binary    := "miin"
 source    := "main.c"
-test_file := "test.inm"
+test_file := "test.mii"
 
 @build:
     {{compiler}} {{flags}} -o {{binary}} {{source}}
 
 @test *args: build
     ./{{binary}} {{test_file}} {{args}} 
+
+@lex: build
+    ./{{binary}} {{test_file}} --lex
+
+@ast: build
+    ./{{binary}} {{test_file}} --ast

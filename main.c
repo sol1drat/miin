@@ -1,6 +1,6 @@
 /*
  * expr    -> mul (("+" | "-") mul)*
- * mul     -> unary (("*" | "/") unary)*
+ * mul     -> unary (("*" | "/" | "%") unary)*
  * unary   -> ("+" | "-") unary | primary
  * primary -> "(" expr ")" | NUMBER
  */
@@ -18,6 +18,7 @@ typedef enum {
     ND_SUB,
     ND_MUL,
     ND_DIV,
+    ND_MOD,
     ND_NEG
 } NodeKind;
 
@@ -27,6 +28,7 @@ typedef enum {
     TK_SUB,
     TK_MUL,
     TK_DIV,
+    TK_MOD,
     TK_OPA,
     TK_CPA,
     TK_EOF
@@ -55,7 +57,7 @@ Node *unary(Parser *p);
 Node *primary(Parser *p);
 
 bool isopr(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '/';
+    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%';
 }
 
 bool ispar(char c) {
@@ -101,6 +103,7 @@ const char *kind_name(TokenKind k) {
         case TK_SUB: return "'-'";
         case TK_MUL: return "'*'";
         case TK_DIV: return "'/'";
+        case TK_MOD: return "'%'";
         case TK_OPA: return "'('";
         case TK_CPA: return "')'";
         case TK_EOF: return "end of input";
@@ -109,7 +112,7 @@ const char *kind_name(TokenKind k) {
 }
 
 Token *expect(Parser *p, TokenKind kind) { if (!match(p, kind)) { Token *t = peek(p);
-        fprintf(stderr, "syntax error: expected %s, got %s on line %zu\n",
+        fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: expected %s, got %s on line %zu\n",
                 kind_name(kind), kind_name(t->kind), t->line_idx);
         exit(1);
     }
@@ -127,6 +130,7 @@ Node *mul(Parser *p) {
     for (;;) {
         if (match(p, TK_MUL)) node = new_binary(ND_MUL, node, unary(p));
         else if (match(p, TK_DIV)) node = new_binary(ND_DIV, node, unary(p));
+        else if (match(p, TK_MOD)) node = new_binary(ND_MOD, node, unary(p));
         else return node;
     }
 }
@@ -163,6 +167,8 @@ void dump(Node *n) {
         case ND_ADD: printf("(+ "); break;
         case ND_SUB: printf("(- "); break;
         case ND_MUL: printf("(* "); break;
+        case ND_DIV: printf("(/ "); break;
+        case ND_MOD: printf("(%% "); break;
         case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
         default: return;
     }
@@ -178,7 +184,22 @@ int eval(Node *n) {
         case ND_ADD: return eval(n->lhs) + eval(n->rhs);
         case ND_SUB: return eval(n->lhs) - eval(n->rhs);
         case ND_MUL: return eval(n->lhs) * eval(n->rhs);
-        case ND_DIV: return eval(n->lhs) / eval(n->rhs);
+        case ND_DIV: {
+            int rhs = eval(n->rhs);
+            if (rhs == 0) {
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: division by zero\n");
+                exit(1);
+            }
+            return eval(n->lhs) / rhs; 
+        }
+        case ND_MOD: {
+            int rhs = eval(n->rhs);
+            if (rhs == 0) {
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: modulo by zero\n");
+                exit(1);
+            }
+            return eval(n->lhs) % rhs; 
+        }
         case ND_NEG: return -eval(n->lhs);
         default: abort();
     }
@@ -270,6 +291,9 @@ int main(int argc, char *argv[]) {
                 case '/':
                     tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx };
                     break;
+                case '%':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx };
+                    break;
             }
         } else if (ispar(c)) {
             switch (c) {
@@ -281,7 +305,7 @@ int main(int argc, char *argv[]) {
                     break;
             }
         } else if (!isspace((unsigned char)c)) {
-            fprintf(stderr, "syntax error: invalid character '%c' on line %zu\n", c, line_idx);
+            fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
             free(src_buffer);
             return 1;
         }
@@ -305,13 +329,14 @@ int main(int argc, char *argv[]) {
     if (argc >= 3 && strcmp(argv[2], "--lex") == 0) {
         for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
             switch (tkn_array[i].kind) {
-                case TK_INT: printf("L%zu  INT(%d)\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
-                case TK_ADD: printf("L%zu  ADD\n", tkn_array[i].line_idx); break;
-                case TK_SUB: printf("L%zu  SUB\n", tkn_array[i].line_idx); break;
-                case TK_MUL: printf("L%zu  MUL\n", tkn_array[i].line_idx); break;
-                case TK_DIV: printf("L%zu  DIV\n", tkn_array[i].line_idx); break;
-                case TK_OPA: printf("L%zu  OPA\n", tkn_array[i].line_idx); break;
-                case TK_CPA: printf("L%zu  CPA\n", tkn_array[i].line_idx); break;
+                case TK_INT: printf("L%zu  INT  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
+                case TK_ADD: printf("L%zu  ADD  +\n", tkn_array[i].line_idx); break;
+                case TK_SUB: printf("L%zu  SUB  -\n", tkn_array[i].line_idx); break;
+                case TK_MUL: printf("L%zu  MUL  *\n", tkn_array[i].line_idx); break;
+                case TK_MOD: printf("L%zu  MOD  %%\n", tkn_array[i].line_idx); break;
+                case TK_DIV: printf("L%zu  DIV  /\n", tkn_array[i].line_idx); break;
+                case TK_OPA: printf("L%zu  OPA  (\n", tkn_array[i].line_idx); break;
+                case TK_CPA: printf("L%zu  CPA  )\n", tkn_array[i].line_idx); break;
                 default: break;
             }
         }
