@@ -56,7 +56,9 @@ typedef struct {
 } Parser;
 
 Node *expr(Parser *p);
+Node *mul(Parser *p);
 Node *unary(Parser *p);
+Node *powr(Parser *p);
 Node *primary(Parser *p);
 
 bool isopr(char c) {
@@ -65,6 +67,40 @@ bool isopr(char c) {
 
 bool ispar(char c) {
     return c == '(' || c == ')';
+}
+
+const char *kind_name(TokenKind k) {
+    switch (k) {
+        case TK_INT: return "a number";
+        case TK_ADD: return "'+'";
+        case TK_SUB: return "'-'";
+        case TK_MUL: return "'*'";
+        case TK_DIV: return "'/'";
+        case TK_MOD: return "'%'";
+        case TK_PWR: return "'^'";
+        case TK_OPA: return "'('";
+        case TK_CPA: return "')'";
+        case TK_EOF: return "end of input";
+        default: return "?";
+    }
+}
+
+void dump(Node *n) {
+    switch (n->kind) {
+        case ND_INT: printf("%d", n->value); return;
+        case ND_ADD: printf("(+ "); break;
+        case ND_SUB: printf("(- "); break;
+        case ND_MUL: printf("(* "); break;
+        case ND_DIV: printf("(/ "); break;
+        case ND_MOD: printf("(%% "); break;
+        case ND_PWR: printf("(^ "); break;
+        case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
+        default: return;
+    }
+    dump(n->lhs);
+    printf(" ");
+    dump(n->rhs);
+    printf(")");
 }
 
 Node *new_unary(NodeKind kind, Node *lhs) {
@@ -99,23 +135,9 @@ bool match(Parser *p, TokenKind kind) {
     return true;
 }
 
-const char *kind_name(TokenKind k) {
-    switch (k) {
-        case TK_INT: return "a number";
-        case TK_ADD: return "'+'";
-        case TK_SUB: return "'-'";
-        case TK_MUL: return "'*'";
-        case TK_DIV: return "'/'";
-        case TK_MOD: return "'%'";
-        case TK_PWR: return "'^'";
-        case TK_OPA: return "'('";
-        case TK_CPA: return "')'";
-        case TK_EOF: return "end of input";
-        default: return "?";
-    }
-}
-
-Token *expect(Parser *p, TokenKind kind) { if (!match(p, kind)) { Token *t = peek(p);
+Token *expect(Parser *p, TokenKind kind) {
+    if (!match(p, kind)) {
+        Token *t = peek(p);
         fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: expected %s, got %s on line %zu\n",
                 kind_name(kind), kind_name(t->kind), t->line_idx);
         exit(1);
@@ -123,16 +145,13 @@ Token *expect(Parser *p, TokenKind kind) { if (!match(p, kind)) { Token *t = pee
     return &p->toks[p->pos - 1];
 }
 
-Node *powr(Parser *p) {
-    Node *node = primary(p);
-    if (match(p, TK_PWR)) return new_binary(ND_PWR, node, powr(p));
-    return node;
-}
-
-Node *unary(Parser *p) {
-    if (match(p, TK_ADD)) return unary(p);
-    if (match(p, TK_SUB)) return new_unary(ND_NEG, unary(p));
-    return powr(p);
+Node *expr(Parser *p) {
+    Node *node = mul(p);
+    for (;;) {
+        if (match(p, TK_ADD)) node = new_binary(ND_ADD, node, mul(p));
+        else if (match(p, TK_SUB)) node = new_binary(ND_SUB, node, mul(p));
+        else return node;
+    }
 }
 
 Node *mul(Parser *p) {
@@ -145,13 +164,16 @@ Node *mul(Parser *p) {
     }
 }
 
-Node *expr(Parser *p) {
-    Node *node = mul(p);
-    for (;;) {
-        if (match(p, TK_ADD)) node = new_binary(ND_ADD, node, mul(p));
-        else if (match(p, TK_SUB)) node = new_binary(ND_SUB, node, mul(p));
-        else return node;
-    }
+Node *unary(Parser *p) {
+    if (match(p, TK_ADD)) return unary(p);
+    if (match(p, TK_SUB)) return new_unary(ND_NEG, unary(p));
+    return powr(p);
+}
+
+Node *powr(Parser *p) {
+    Node *node = primary(p);
+    if (match(p, TK_PWR)) return new_binary(ND_PWR, node, powr(p));
+    return node;
 }
 
 Node *primary(Parser *p) {
@@ -169,24 +191,6 @@ Node *parse(Token *toks) {
     Node *n = expr(&p);
     expect(&p, TK_EOF);
     return n;
-}
-
-void dump(Node *n) {
-    switch (n->kind) {
-        case ND_INT: printf("%d", n->value); return;
-        case ND_ADD: printf("(+ "); break;
-        case ND_SUB: printf("(- "); break;
-        case ND_MUL: printf("(* "); break;
-        case ND_DIV: printf("(/ "); break;
-        case ND_MOD: printf("(%% "); break;
-        case ND_PWR: printf("(^ "); break;
-        case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
-        default: return;
-    }
-    dump(n->lhs);
-    printf(" ");
-    dump(n->rhs);
-    printf(")");
 }
 
 int ipow(int base, int exp) {
