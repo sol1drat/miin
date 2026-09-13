@@ -4,17 +4,21 @@ binary    := "miin"
 source    := "main.c"
 test_file := "test.mii"
 
+clean:
+    rm ~/.local/bin/miin
+    rm ./{{binary}}
+
 @build:
     {{compiler}} {{flags}} -o {{binary}} {{source}}
 
-@test *args: build
-    ./{{binary}} {{test_file}} {{args}} 
-
-@lex: build
-    ./{{binary}} {{test_file}} --lex
-
-@ast: build
-    ./{{binary}} {{test_file}} --ast
-
 @install: build
     cp ./{{binary}} ~/.local/bin
+
+@test *args: install
+    ./{{binary}} {{test_file}} {{args}} 
+
+@lex: install
+    ./{{binary}} {{test_file}} --lex
+
+@ast: install
+    ./{{binary}} {{test_file}} --ast

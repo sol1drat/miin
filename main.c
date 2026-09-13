@@ -22,9 +22,11 @@ typedef enum {
     ND_MOD,
     ND_PWR,
     ND_NEG
-} NodeKind;
+} NodeType;
 
 typedef enum {
+    TK_VAR,
+    TK_EQL,
     TK_INT,
     TK_ADD,
     TK_SUB,
@@ -35,17 +37,18 @@ typedef enum {
     TK_OPA,
     TK_CPA,
     TK_EOF
-} TokenKind;
+} TokenType;
 
 typedef struct Node Node;
 struct Node {
-    NodeKind kind;
+    NodeType kind;
     int value;
     Node *lhs, *rhs;
 };
 
 typedef struct {
-    TokenKind kind;
+    TokenType kind;
+    char *var_value;
     int int_value;
     size_t line_idx;
 } Token;
@@ -61,7 +64,7 @@ Node *unary(Parser *p);
 Node *powr(Parser *p);
 Node *primary(Parser *p);
 
-const char *kind_name(TokenKind k) {
+const char *kind_name(TokenType k) {
     switch (k) {
         case TK_INT: return "a number";
         case TK_ADD: return "'+'";
@@ -103,6 +106,7 @@ void println_ast(Node *n) {
 void println_tkns(Token *tkn_array) {
     for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
         switch (tkn_array[i].kind) {
+            case TK_VAR: printf("L%zu  \x1b[1;37mVAR\x1b[0m  %s\n", tkn_array[i].line_idx, tkn_array[i].var_value); break;
             case TK_INT: printf("L%zu  \x1b[1;37mINT\x1b[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
             case TK_ADD: printf("L%zu  \x1b[1;37mADD\x1b[0m  +\n", tkn_array[i].line_idx); break;
             case TK_SUB: printf("L%zu  \x1b[1;37mSUB\x1b[0m  -\n", tkn_array[i].line_idx); break;
@@ -112,19 +116,20 @@ void println_tkns(Token *tkn_array) {
             case TK_PWR: printf("L%zu  \x1b[1;37mPWR\x1b[0m  ^\n", tkn_array[i].line_idx); break;
             case TK_OPA: printf("L%zu  \x1b[1;37mOPA\x1b[0m  (\n", tkn_array[i].line_idx); break;
             case TK_CPA: printf("L%zu  \x1b[1;37mCPA\x1b[0m  )\n", tkn_array[i].line_idx); break;
+            case TK_EQL: printf("L%zu  \x1b[1;37mEQL\x1b[0m  =\n", tkn_array[i].line_idx); break;
             default: break;
         }
     }
 }
 
-Node *new_unary(NodeKind kind, Node *lhs) {
+Node *new_unary(NodeType kind, Node *lhs) {
     Node *n = calloc(1, sizeof(Node));
     n->kind = kind;
     n->lhs = lhs;
     return n;
 }
 
-Node *new_binary(NodeKind kind, Node *lhs, Node *rhs) {
+Node *new_binary(NodeType kind, Node *lhs, Node *rhs) {
     Node *n = calloc(1, sizeof(Node));
     n->kind = kind;
     n->lhs = lhs;
@@ -143,13 +148,13 @@ Token *peek(Parser *p) {
     return &p->toks[p->pos];
 }
 
-bool match(Parser *p, TokenKind kind) {
+bool match(Parser *p, TokenType kind) {
     if (peek(p)->kind != kind) return false;
     p->pos++;
     return true;
 }
 
-Token *expect(Parser *p, TokenKind kind) {
+Token *expect(Parser *p, TokenType kind) {
     if (!match(p, kind)) {
         Token *t = peek(p);
         fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: expected %s, got %s on line %zu\n",
@@ -306,26 +311,52 @@ Token *lex(char *src_buffer) {
     size_t line_int_idx = 1;
     size_t line_end_idx = 1;
 
+    char var_value[64];
+    size_t var_value_idx = 0;
+    bool reading_var = false;
     int int_value = 0;
     bool reading_int = false;
 
     while (src_buffer[src_idx] != '\0') {
         char c = src_buffer[src_idx];
 
+        // flush integer
         if (!isdigit((unsigned char)c) && reading_int) {
             Token tkn = {
                 .kind = TK_INT,
                 .int_value = int_value,
                 .line_idx = line_int_idx,
             };
-
             tkn_array[tkn_arr_idx++] = tkn;
-
             int_value = 0;
             reading_int = false;
+
         }
 
-        if (isdigit((unsigned char)c)) {
+        // flush variable
+        if ((!isalpha((unsigned char)c) && c != '_') && reading_var) {
+            var_value[var_value_idx] = '\0';
+            char *var_value_cpy = malloc(var_value_idx + 1);
+            if (var_value_cpy == NULL) { 
+                perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
+                return NULL;
+            }
+            memcpy(var_value_cpy, var_value, var_value_idx + 1);
+            Token tkn = {
+                .kind = TK_VAR,
+                .var_value = var_value_cpy,
+                .line_idx = line_idx,
+            };
+            tkn_array[tkn_arr_idx++] = tkn;
+            var_value_idx = 0;
+            reading_var = false;
+        }
+
+        if (isalpha((unsigned char)c) || c == '_') {
+            var_value[var_value_idx++] = c;
+            reading_var = true;
+        }
+        else if (isdigit((unsigned char)c)) {
             if (!reading_int) line_int_idx = line_idx;
             int_value = int_value * 10 + (c - '0');
             reading_int = true;
@@ -339,6 +370,7 @@ Token *lex(char *src_buffer) {
                 case '^': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx }; break;
                 case '(': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_OPA, .line_idx = line_idx }; break;
                 case ')': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_CPA, .line_idx = line_idx }; break;
+                case '=': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EQL, .line_idx = line_idx }; break;
                 default:
                     if (!isspace((unsigned char)c)) {
                         fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
@@ -360,8 +392,22 @@ Token *lex(char *src_buffer) {
             .line_idx = line_int_idx,
         };
         tkn_array[tkn_arr_idx++] = tkn;
+    } else if (reading_var) {
+        var_value[var_value_idx++] = '\0';
+        char *var_value_cpy = malloc(var_value_idx + 1);
+        if (var_value_cpy == NULL) { 
+            perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
+            return NULL;
+        }
+        memcpy(var_value_cpy, var_value, var_value_idx + 1);
+        Token tkn = {
+            .kind = TK_VAR,
+            .var_value = var_value_cpy,
+            .line_idx = line_idx,
+        };
+        tkn_array[tkn_arr_idx++] = tkn;
     }
-    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
+    tkn_array[tkn_arr_idx] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
 
     return tkn_array;
 }
