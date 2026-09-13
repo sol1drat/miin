@@ -85,7 +85,7 @@ const char *kind_name(TokenKind k) {
     }
 }
 
-void dump(Node *n) {
+void _dump_ast(Node *n) {
     switch (n->kind) {
         case ND_INT: printf("%d", n->value); return;
         case ND_ADD: printf("(+ "); break;
@@ -94,13 +94,35 @@ void dump(Node *n) {
         case ND_DIV: printf("(/ "); break;
         case ND_MOD: printf("(%% "); break;
         case ND_PWR: printf("(^ "); break;
-        case ND_NEG: printf("(- "); dump(n->lhs); printf(")"); return;
+        case ND_NEG: printf("(- "); _dump_ast(n->lhs); printf(")"); return;
         default: return;
     }
-    dump(n->lhs);
+    _dump_ast(n->lhs);
     printf(" ");
-    dump(n->rhs);
+    _dump_ast(n->rhs);
     printf(")");
+}
+
+void dump_ast(Node *n) {
+    _dump_ast(n);
+    putchar('\n');
+}
+
+void dump_tkns(Token *tkn_array) {
+    for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
+        switch (tkn_array[i].kind) {
+            case TK_INT: printf("L%zu  \x1b\[1;37mINT\x1b\[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
+            case TK_ADD: printf("L%zu  \x1b\[1;37mADD\x1b\[0m  +\n", tkn_array[i].line_idx); break;
+            case TK_SUB: printf("L%zu  \x1b\[1;37mSUB\x1b\[0m  -\n", tkn_array[i].line_idx); break;
+            case TK_MUL: printf("L%zu  \x1b\[1;37mMUL\x1b\[0m  *\n", tkn_array[i].line_idx); break;
+            case TK_DIV: printf("L%zu  \x1b\[1;37mDIV\x1b\[0m  /\n", tkn_array[i].line_idx); break;
+            case TK_MOD: printf("L%zu  \x1b\[1;37mMOD\x1b\[0m  %%\n", tkn_array[i].line_idx); break;
+            case TK_PWR: printf("L%zu  \x1b\[1;37mPWR\x1b\[0m  ^\n", tkn_array[i].line_idx); break;
+            case TK_OPA: printf("L%zu  \x1b\[1;37mOPA\x1b\[0m  (\n", tkn_array[i].line_idx); break;
+            case TK_CPA: printf("L%zu  \x1b\[1;37mCPA\x1b\[0m  )\n", tkn_array[i].line_idx); break;
+            default: break;
+        }
+    }
 }
 
 Node *new_unary(NodeKind kind, Node *lhs) {
@@ -279,6 +301,100 @@ char *srcread(const char *file_path) {
     return src_buffer;
 }
 
+Token *lex(char *src_buffer) {
+    Token *tkn_array = malloc(64 * sizeof(Token));
+    if (tkn_array == NULL) {
+        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mallocating memory\x1b\[0m");
+        return NULL;
+    }
+
+    size_t tkn_arr_idx = 0;
+    size_t src_idx = 0;
+    size_t line_idx = 1;
+    size_t line_int_idx = 1;
+    size_t line_end_idx = 1;
+
+    int int_value = 0;
+    bool reading_int = false;
+
+    while (src_buffer[src_idx] != '\0') {
+        char c = src_buffer[src_idx];
+
+        // flush integer
+        if (!isdigit((unsigned char)c) && reading_int) {
+            Token tkn = {
+                .kind = TK_INT,
+                .int_value = int_value,
+                .line_idx = line_int_idx,
+            };
+
+            tkn_array[tkn_arr_idx++] = tkn;
+
+            int_value = 0;
+            reading_int = false;
+        }
+
+        // keyword detection
+        if (isdigit((unsigned char)c)) {
+            if (!reading_int) line_int_idx = line_idx;
+            int_value = int_value * 10 + (c - '0');
+            reading_int = true;
+        } else if (isopr(c)) {
+            switch (c) {
+                case '+':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_ADD, .line_idx = line_idx };
+                    break;
+                case '-':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_SUB, .line_idx = line_idx };
+                    break;
+                case '*':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MUL, .line_idx = line_idx };
+                    break;
+                case '/':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx };
+                    break;
+                case '%':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx };
+                    break;
+                case '^':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx };
+                    break;
+            }
+        } else if (ispar(c)) {
+            switch (c) {
+                case '(':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_OPA, .line_idx = line_idx };
+                    break;
+                case ')':
+                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_CPA, .line_idx = line_idx };
+                    break;
+            }
+        } else if (!isspace((unsigned char)c)) {
+            fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
+            free(src_buffer);
+            free(tkn_array);
+            return NULL;
+        }
+
+        line_end_idx = line_idx;
+        if (c == '\n') line_idx++;
+        src_idx++;
+    }
+
+    if (reading_int) {
+        Token tkn = {
+            .kind = TK_INT,
+            .int_value = int_value,
+            .line_idx = line_int_idx,
+        };
+        tkn_array[tkn_arr_idx++] = tkn;
+    }
+    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
+    free(src_buffer);
+
+    return tkn_array;
+}
+
 int main(int argc, char *argv[]) {
     bool opt_lex = false;
     bool opt_ast = false;
@@ -323,111 +439,18 @@ int main(int argc, char *argv[]) {
     char *src_buffer = srcread(src_file);
     if (src_buffer == NULL) return 1;
 
-    Token tkn_array[64];
-    size_t tkn_arr_idx = 0;
-    size_t src_idx = 0;
-    size_t line_idx = 1;
-    size_t line_int_idx = 1;
-    size_t line_end_idx = 1;
-
-    int int_value = 0;
-    bool reading_int = false;
-
-    while (src_buffer[src_idx] != '\0') {
-        char c = src_buffer[src_idx];
-
-        if (!isdigit((unsigned char)c) && reading_int) {
-            Token tkn = {
-                .kind = TK_INT,
-                .int_value = int_value,
-                .line_idx = line_int_idx,
-            };
-
-            tkn_array[tkn_arr_idx++] = tkn;
-
-            int_value = 0;
-            reading_int = false;
-        }
-
-        if (isdigit((unsigned char)c)) {
-            if (!reading_int) line_int_idx = line_idx;
-            int_value = int_value * 10 + (c - '0');
-            reading_int = true;
-        } else if (isopr(c)) {
-            switch (c) {
-                case '+':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_ADD, .line_idx = line_idx };
-                    break;
-                case '-':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_SUB, .line_idx = line_idx };
-                    break;
-                case '*':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MUL, .line_idx = line_idx };
-                    break;
-                case '/':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx };
-                    break;
-                case '%':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx };
-                    break;
-                case '^':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx };
-                    break;
-            }
-        } else if (ispar(c)) {
-            switch (c) {
-                case '(':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_OPA, .line_idx = line_idx };
-                    break;
-                case ')':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_CPA, .line_idx = line_idx };
-                    break;
-            }
-        } else if (!isspace((unsigned char)c)) {
-            fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
-            free(src_buffer);
-            return 1;
-        }
-
-        line_end_idx = line_idx;
-        if (c == '\n') line_idx++;
-        src_idx++;
-    }
-
-    if (reading_int) {
-        Token tkn = {
-            .kind = TK_INT,
-            .int_value = int_value,
-            .line_idx = line_int_idx,
-        };
-        tkn_array[tkn_arr_idx++] = tkn;
-    }
-    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
-    free(src_buffer);
+    Token *tkn_array = lex(src_buffer);
 
     if (opt_lex) {
-        for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
-            switch (tkn_array[i].kind) {
-                case TK_INT: printf("L%zu  \x1b\[1;37mINT\x1b\[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
-                case TK_ADD: printf("L%zu  \x1b\[1;37mADD\x1b\[0m  +\n", tkn_array[i].line_idx); break;
-                case TK_SUB: printf("L%zu  \x1b\[1;37mSUB\x1b\[0m  -\n", tkn_array[i].line_idx); break;
-                case TK_MUL: printf("L%zu  \x1b\[1;37mMUL\x1b\[0m  *\n", tkn_array[i].line_idx); break;
-                case TK_DIV: printf("L%zu  \x1b\[1;37mDIV\x1b\[0m  /\n", tkn_array[i].line_idx); break;
-                case TK_MOD: printf("L%zu  \x1b\[1;37mMOD\x1b\[0m  %%\n", tkn_array[i].line_idx); break;
-                case TK_PWR: printf("L%zu  \x1b\[1;37mPWR\x1b\[0m  ^\n", tkn_array[i].line_idx); break;
-                case TK_OPA: printf("L%zu  \x1b\[1;37mOPA\x1b\[0m  (\n", tkn_array[i].line_idx); break;
-                case TK_CPA: printf("L%zu  \x1b\[1;37mCPA\x1b\[0m  )\n", tkn_array[i].line_idx); break;
-                default: break;
-            }
-        }
+        dump_tkns(tkn_array);
         return 0;
     }
 
     Node *ast = parse(tkn_array);
+    free(tkn_array);
 
     if (opt_ast) {
-        dump(ast);
-        putchar('\n');
+        dump_ast(ast);
         return 0;
     }
 
