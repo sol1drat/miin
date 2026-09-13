@@ -61,14 +61,6 @@ Node *unary(Parser *p);
 Node *powr(Parser *p);
 Node *primary(Parser *p);
 
-bool isopr(char c) {
-    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '^';
-}
-
-bool ispar(char c) {
-    return c == '(' || c == ')';
-}
-
 const char *kind_name(TokenKind k) {
     switch (k) {
         case TK_INT: return "a number";
@@ -85,7 +77,7 @@ const char *kind_name(TokenKind k) {
     }
 }
 
-void _dump_ast(Node *n) {
+void print_ast(Node *n) {
     switch (n->kind) {
         case ND_INT: printf("%d", n->value); return;
         case ND_ADD: printf("(+ "); break;
@@ -94,32 +86,32 @@ void _dump_ast(Node *n) {
         case ND_DIV: printf("(/ "); break;
         case ND_MOD: printf("(%% "); break;
         case ND_PWR: printf("(^ "); break;
-        case ND_NEG: printf("(- "); _dump_ast(n->lhs); printf(")"); return;
+        case ND_NEG: printf("(- "); print_ast(n->lhs); printf(")"); return;
         default: return;
     }
-    _dump_ast(n->lhs);
+    print_ast(n->lhs);
     printf(" ");
-    _dump_ast(n->rhs);
+    print_ast(n->rhs);
     printf(")");
 }
 
-void dump_ast(Node *n) {
-    _dump_ast(n);
+void println_ast(Node *n) {
+    print_ast(n);
     putchar('\n');
 }
 
-void dump_tkns(Token *tkn_array) {
+void println_tkns(Token *tkn_array) {
     for (int i = 0; tkn_array[i].kind != TK_EOF; i++) {
         switch (tkn_array[i].kind) {
-            case TK_INT: printf("L%zu  \x1b\[1;37mINT\x1b\[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
-            case TK_ADD: printf("L%zu  \x1b\[1;37mADD\x1b\[0m  +\n", tkn_array[i].line_idx); break;
-            case TK_SUB: printf("L%zu  \x1b\[1;37mSUB\x1b\[0m  -\n", tkn_array[i].line_idx); break;
-            case TK_MUL: printf("L%zu  \x1b\[1;37mMUL\x1b\[0m  *\n", tkn_array[i].line_idx); break;
-            case TK_DIV: printf("L%zu  \x1b\[1;37mDIV\x1b\[0m  /\n", tkn_array[i].line_idx); break;
-            case TK_MOD: printf("L%zu  \x1b\[1;37mMOD\x1b\[0m  %%\n", tkn_array[i].line_idx); break;
-            case TK_PWR: printf("L%zu  \x1b\[1;37mPWR\x1b\[0m  ^\n", tkn_array[i].line_idx); break;
-            case TK_OPA: printf("L%zu  \x1b\[1;37mOPA\x1b\[0m  (\n", tkn_array[i].line_idx); break;
-            case TK_CPA: printf("L%zu  \x1b\[1;37mCPA\x1b\[0m  )\n", tkn_array[i].line_idx); break;
+            case TK_INT: printf("L%zu  \x1b[1;37mINT\x1b[0m  %d\n", tkn_array[i].line_idx, tkn_array[i].int_value); break;
+            case TK_ADD: printf("L%zu  \x1b[1;37mADD\x1b[0m  +\n", tkn_array[i].line_idx); break;
+            case TK_SUB: printf("L%zu  \x1b[1;37mSUB\x1b[0m  -\n", tkn_array[i].line_idx); break;
+            case TK_MUL: printf("L%zu  \x1b[1;37mMUL\x1b[0m  *\n", tkn_array[i].line_idx); break;
+            case TK_DIV: printf("L%zu  \x1b[1;37mDIV\x1b[0m  /\n", tkn_array[i].line_idx); break;
+            case TK_MOD: printf("L%zu  \x1b[1;37mMOD\x1b[0m  %%\n", tkn_array[i].line_idx); break;
+            case TK_PWR: printf("L%zu  \x1b[1;37mPWR\x1b[0m  ^\n", tkn_array[i].line_idx); break;
+            case TK_OPA: printf("L%zu  \x1b[1;37mOPA\x1b[0m  (\n", tkn_array[i].line_idx); break;
+            case TK_CPA: printf("L%zu  \x1b[1;37mCPA\x1b[0m  )\n", tkn_array[i].line_idx); break;
             default: break;
         }
     }
@@ -236,7 +228,7 @@ int eval(Node *n) {
         case ND_DIV: {
             int rhs = eval(n->rhs);
             if (rhs == 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: division by zero\n");
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: division by zero\n");
                 exit(1);
             }
             return eval(n->lhs) / rhs; 
@@ -244,7 +236,7 @@ int eval(Node *n) {
         case ND_MOD: {
             int rhs = eval(n->rhs);
             if (rhs == 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: modulo by zero\n");
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: modulo by zero\n");
                 exit(1);
             }
             return eval(n->lhs) % rhs; 
@@ -252,7 +244,7 @@ int eval(Node *n) {
         case ND_PWR: {
             int rhs = eval(n->rhs);
             if (rhs < 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0;0m: exponent less than zero\n");
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: exponent less than zero\n");
                 exit(1);
             }
             return ipow(eval(n->lhs), rhs); 
@@ -265,7 +257,7 @@ int eval(Node *n) {
 char *srcread(const char *file_path) {
     FILE *fp = fopen(file_path, "rb");
     if (fp == NULL) {
-        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mopening file\x1b\[1;0m");
+        perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mopening file\x1b[0m");
         return NULL;
     }
 
@@ -273,7 +265,7 @@ char *srcread(const char *file_path) {
 
     long size = ftell(fp);
     if (size == -1) {
-        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mgetting file size\x1b\[0m");
+        perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mgetting file size\x1b[0m");
         fclose(fp);
         return NULL;
     }
@@ -283,14 +275,14 @@ char *srcread(const char *file_path) {
 
     char *src_buffer = malloc(file_size + 1);
     if (src_buffer == NULL) {
-        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mallocating memory\x1b\[0m");
+        perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
         fclose(fp);
         return NULL;
     }
 
     size_t bytes_read = fread(src_buffer, 1, file_size, fp);
     if (bytes_read != file_size) {
-        fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mreading file\x1b\[0m\n");
+        fprintf(stderr, "\x1b[1;31merror\x1b[0m: \x1b[1;37mreading file\x1b[0m\n");
         free(src_buffer);
         fclose(fp);
         return NULL;
@@ -304,7 +296,7 @@ char *srcread(const char *file_path) {
 Token *lex(char *src_buffer) {
     Token *tkn_array = malloc(64 * sizeof(Token));
     if (tkn_array == NULL) {
-        perror("\x1b\[1;31merror\x1b\[0m: \x1b\[1;37mallocating memory\x1b\[0m");
+        perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
         return NULL;
     }
 
@@ -320,7 +312,6 @@ Token *lex(char *src_buffer) {
     while (src_buffer[src_idx] != '\0') {
         char c = src_buffer[src_idx];
 
-        // flush integer
         if (!isdigit((unsigned char)c) && reading_int) {
             Token tkn = {
                 .kind = TK_INT,
@@ -334,46 +325,27 @@ Token *lex(char *src_buffer) {
             reading_int = false;
         }
 
-        // keyword detection
         if (isdigit((unsigned char)c)) {
             if (!reading_int) line_int_idx = line_idx;
             int_value = int_value * 10 + (c - '0');
             reading_int = true;
-        } else if (isopr(c)) {
+        } else {
             switch (c) {
-                case '+':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_ADD, .line_idx = line_idx };
-                    break;
-                case '-':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_SUB, .line_idx = line_idx };
-                    break;
-                case '*':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MUL, .line_idx = line_idx };
-                    break;
-                case '/':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx };
-                    break;
-                case '%':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx };
-                    break;
-                case '^':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx };
-                    break;
+                case '+': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_ADD, .line_idx = line_idx }; break;
+                case '-': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_SUB, .line_idx = line_idx }; break;
+                case '*': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MUL, .line_idx = line_idx }; break;
+                case '/': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_DIV, .line_idx = line_idx }; break;
+                case '%': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_MOD, .line_idx = line_idx }; break;
+                case '^': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_PWR, .line_idx = line_idx }; break;
+                case '(': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_OPA, .line_idx = line_idx }; break;
+                case ')': tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_CPA, .line_idx = line_idx }; break;
+                default:
+                    if (!isspace((unsigned char)c)) {
+                        fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
+                        free(tkn_array);
+                        return NULL;
+                    }
             }
-        } else if (ispar(c)) {
-            switch (c) {
-                case '(':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_OPA, .line_idx = line_idx };
-                    break;
-                case ')':
-                    tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_CPA, .line_idx = line_idx };
-                    break;
-            }
-        } else if (!isspace((unsigned char)c)) {
-            fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_idx);
-            free(src_buffer);
-            free(tkn_array);
-            return NULL;
         }
 
         line_end_idx = line_idx;
@@ -390,7 +362,6 @@ Token *lex(char *src_buffer) {
         tkn_array[tkn_arr_idx++] = tkn;
     }
     tkn_array[tkn_arr_idx++] = (Token){ .kind = TK_EOF, .line_idx = line_end_idx };
-    free(src_buffer);
 
     return tkn_array;
 }
@@ -418,21 +389,21 @@ int main(int argc, char *argv[]) {
                   );
             return 0;
         } else if (argv[i][0] == '-') {
-            fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: unknown option '%s'\n", argv[i]);
-            printf("use option '-h' or '--help' for help\n");
+            fprintf(stderr, "\x1b[1;31merror\x1b[0m: unknown option '%s'\n", argv[i]);
+            fprintf(stderr, "use option '-h' or '--help' for help\n");
             return 1;
         } else if (src_file == NULL) {
             src_file = argv[i];
         } else {
-            fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: unexpected argument '%s'\n", argv[i]);
-            printf("use option '-h' or '--help' for help\n");
+            fprintf(stderr, "\x1b[1;31merror\x1b[0m: unexpected argument '%s'\n", argv[i]);
+            fprintf(stderr, "use option '-h' or '--help' for help\n");
             return 1;
         }
     }
 
     if (src_file == NULL) {
-        fprintf(stderr, "\x1b\[1;31merror\x1b\[0m: no input file\n");
-        printf("use option '-h' or '--help' for help\n");
+        fprintf(stderr, "\x1b[1;31merror\x1b[0m: no input file\n");
+        fprintf(stderr, "use option '-h' or '--help' for help\n");
         return 1;
     }
 
@@ -440,9 +411,15 @@ int main(int argc, char *argv[]) {
     if (src_buffer == NULL) return 1;
 
     Token *tkn_array = lex(src_buffer);
+    if (tkn_array == NULL) {
+        free(src_buffer);
+        return 1;
+    }
+    free(src_buffer);
 
     if (opt_lex) {
-        dump_tkns(tkn_array);
+        println_tkns(tkn_array);
+        free(tkn_array);
         return 0;
     }
 
@@ -450,7 +427,7 @@ int main(int argc, char *argv[]) {
     free(tkn_array);
 
     if (opt_ast) {
-        dump_ast(ast);
+        println_ast(ast);
         return 0;
     }
 
