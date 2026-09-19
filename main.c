@@ -1,9 +1,11 @@
 /*
+ * program -> stmt* EOF
+ * stmt    -> expr ("=" expr)?
  * expr    -> mul (("+" | "-") mul)*
  * mul     -> unary (("*" | "/" | "%") unary)*
  * unary   -> ("+" | "-") unary | powr
  * powr    -> primary ("^" unary)?
- * primary -> "(" expr ")" | NUMBER
+ * primary -> "(" expr ")" | NUMBER | IDENT
  */
 
 #include <stddef.h>
@@ -14,6 +16,8 @@
 #include <ctype.h>
 
 typedef enum {
+    ND_VAR,
+    ND_ASSIGN,
     ND_INT,
     ND_ADD,
     ND_SUB,
@@ -43,6 +47,7 @@ typedef struct Node Node;
 struct Node {
     NodeType type;
     int value;
+    char *name;
     Node *lhs, *rhs;
 };
 
@@ -59,7 +64,23 @@ typedef struct {
     int pos;
 } Parser;
 
+typedef struct {
+    char *name;
+    int value;
+} Var;
+
+typedef struct {
+    Var *vars;
+    size_t len, cap;
+} Env;
+
+typedef struct {
+    Node **stmts;
+    size_t len;
+} Program;
+
 Node *expr(Parser *p);
+Node *stmt(Parser *p);
 Node *mul(Parser *p);
 Node *unary(Parser *p);
 Node *powr(Parser *p);
@@ -76,6 +97,12 @@ void *check_alloc(void *p) {
 void *xmalloc(size_t size)           { return check_alloc(malloc(size)); }
 void *xcalloc(size_t n, size_t size) { return check_alloc(calloc(n, size)); }
 void *xrealloc(void *p, size_t size) { return check_alloc(realloc(p, size)); }
+char *xstrdup(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *p = xmalloc(n);
+    memcpy(p, s, n);
+    return p;
+}
 
 const char *type_name(TokenType t) {
     switch (t) {
@@ -97,14 +124,16 @@ const char *type_name(TokenType t) {
 
 void print_ast(Node *n) {
     switch (n->type) {
-        case ND_INT: printf("%d", n->value); return;
-        case ND_ADD: printf("(+ "); break;
-        case ND_SUB: printf("(- "); break;
-        case ND_MUL: printf("(* "); break;
-        case ND_DIV: printf("(/ "); break;
-        case ND_MOD: printf("(%% "); break;
-        case ND_POW: printf("(^ "); break;
-        case ND_NEG: printf("(- "); print_ast(n->lhs); printf(")"); return;
+        case ND_VAR:    printf("%s", n->name); return;
+        case ND_INT:    printf("%d", n->value); return;
+        case ND_ASSIGN: printf("(= "); break;
+        case ND_ADD:    printf("(+ "); break;
+        case ND_SUB:    printf("(- "); break;
+        case ND_MUL:    printf("(* "); break;
+        case ND_DIV:    printf("(/ "); break;
+        case ND_MOD:    printf("(%% "); break;
+        case ND_POW:    printf("(^ "); break;
+        case ND_NEG:    printf("(- "); print_ast(n->lhs); printf(")"); return;
         default: return;
     }
     print_ast(n->lhs);
@@ -135,6 +164,43 @@ void println_toks(Token *toks) {
             default: break;
         }
     }
+}
+
+Var *env_find(Env *e, const char *name) {
+    for (size_t i = 0; i < e->len; i++)
+        if (strcmp(e->vars[i].name, name) == 0)
+            return &e->vars[i];
+    return NULL;
+}
+
+void env_set(Env *e, const char *name, int value) {
+    Var *v = env_find(e, name);
+    if (v != NULL) {
+        v->value = value;
+        return;
+    }
+    if (e->len == e->cap) {
+        e->cap = e->cap * 2 + 8;
+        e->vars = xrealloc(e->vars, e->cap * sizeof(Var));
+    }
+    e->vars[e->len].name = xstrdup(name);
+    e->vars[e->len].value = value;
+    e->len++;
+}
+
+void env_free(Env *e) {
+    for (size_t i = 0; i < e->len; i++)
+        free(e->vars[i].name);
+    free(e->vars);
+}
+
+Node *new_var(const char *name, size_t len) {
+    Node *n = xcalloc(1, sizeof(Node));
+    n->type = ND_VAR;
+    n->name = xmalloc(len + 1);
+    memcpy(n->name, name, len);
+    n->name[len] = '\0';
+    return n;
 }
 
 Node *new_unary(NodeType type, Node *lhs) {
@@ -179,6 +245,19 @@ Token *expect(Parser *p, TokenType type) {
     return &p->toks[p->pos - 1];
 }
 
+Node *stmt(Parser *p) {
+    Node *node = expr(p);
+    Token *t = peek(p);
+    if (t->type != TK_EQL)
+        return node;
+    if (node->type != ND_VAR) {
+        fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: cannot assign on line %zu\n", t->line_num);
+        exit(1);
+    }
+    p->pos++;
+    return new_binary(ND_ASSIGN, node, expr(p));
+}
+
 Node *expr(Parser *p) {
     Node *node = mul(p);
     for (;;) {
@@ -216,22 +295,38 @@ Node *primary(Parser *p) {
         expect(p, TK_CPA);
         return n;
     }
-    Token *t = expect(p, TK_INT);
+    Token *t = peek(p);
+    if (match(p, TK_VAR)) return new_var(t->var_value, t->var_len);
+    t = expect(p, TK_INT);
     return new_int(t->int_value);
 }
 
-Node *parse(Token *toks) {
+Program parse(Token *toks) {
+    Program prog = { NULL, 0 };
     Parser p = { toks, 0 };
-    Node *n = expr(&p);
-    expect(&p, TK_EOF);
-    return n;
+    size_t cap = 0;
+    while (peek(&p)->type != TK_EOF) {
+        if (prog.len == cap) {
+            cap = cap * 2 + 8;
+            prog.stmts = xrealloc(prog.stmts, cap * sizeof(Node*));
+        }
+        prog.stmts[prog.len++] = stmt(&p);
+    }
+    return prog;
 }
 
 void free_ast(Node *n) {
     if (n == NULL) return;
     free_ast(n->lhs);
     free_ast(n->rhs);
+    free(n->name);
     free(n);
+}
+
+void free_prog(Program *prog) {
+    for (size_t i = 0; i < prog->len; i++)
+        free_ast(prog->stmts[i]);
+    free(prog->stmts);
 }
 
 int ipow(int base, int exp) {
@@ -246,37 +341,41 @@ int ipow(int base, int exp) {
     return result;
 }
 
-int eval(Node *n) {
+int eval(Node *n, Env *env) {
     switch (n->type) {
         case ND_INT: return n->value;
-        case ND_ADD: return eval(n->lhs) + eval(n->rhs);
-        case ND_SUB: return eval(n->lhs) - eval(n->rhs);
-        case ND_MUL: return eval(n->lhs) * eval(n->rhs);
-        case ND_DIV: {
-            int rhs = eval(n->rhs);
-            if (rhs == 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: division by zero\n");
+        case ND_VAR: {
+            Var *v = env_find(env, n->name);
+            if (v == NULL) {
+                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: undefined variable '%s'\n", n->name);
                 exit(1);
             }
-            return eval(n->lhs) / rhs; 
+            return v->value;
+        }
+        case ND_ASSIGN: {
+            int value = eval(n->rhs, env);
+            env_set(env, n->lhs->name, value);
+            return value;
+        }
+        case ND_ADD: return eval(n->lhs, env) + eval(n->rhs, env);
+        case ND_SUB: return eval(n->lhs, env) - eval(n->rhs, env);
+        case ND_MUL: return eval(n->lhs, env) * eval(n->rhs, env);
+        case ND_DIV: {
+            int rhs = eval(n->rhs, env);
+            if (rhs == 0) { fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: division by zero\n"); exit(1); }
+            return eval(n->lhs, env) / rhs;
         }
         case ND_MOD: {
-            int rhs = eval(n->rhs);
-            if (rhs == 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: modulo by zero\n");
-                exit(1);
-            }
-            return eval(n->lhs) % rhs; 
+            int rhs = eval(n->rhs, env);
+            if (rhs == 0) { fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: modulo by zero\n"); exit(1); }
+            return eval(n->lhs, env) % rhs;
         }
         case ND_POW: {
-            int rhs = eval(n->rhs);
-            if (rhs < 0) {
-                fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: exponent less than zero\n");
-                exit(1);
-            }
-            return ipow(eval(n->lhs), rhs); 
+            int rhs = eval(n->rhs, env);
+            if (rhs < 0) { fprintf(stderr, "\x1b[1;31mruntime error\x1b[0m: exponent less than zero\n"); exit(1); }
+            return ipow(eval(n->lhs, env), rhs);
         }
-        case ND_NEG: return -eval(n->lhs);
+        case ND_NEG: return -eval(n->lhs, env);
         default: abort();
     }
 }
@@ -301,11 +400,6 @@ char *file_to_buf(const char *file_path) {
     rewind(fp);
 
     char *src = xmalloc(file_size + 1);
-    if (src == NULL) {
-        perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
-        fclose(fp);
-        return NULL;
-    }
 
     size_t bytes_read = fread(src, 1, file_size, fp);
     if (bytes_read != file_size) {
@@ -322,13 +416,8 @@ char *file_to_buf(const char *file_path) {
 
 Token *push_tok(Token *toks, size_t *len, size_t *cap, Token tok) {
     if (*len == *cap) {
-        *cap = *cap ? *cap * 2 : 64;
+        *cap = *cap * 2 + 64;
         Token *tmp = xrealloc(toks, *cap * sizeof(Token));
-        if (tmp == NULL) {
-            perror("\x1b[1;31merror\x1b[0m: \x1b[1;37mallocating memory\x1b[0m");
-            free(toks);
-            return NULL;
-        }
         toks = tmp;
     }
     toks[(*len)++] = tok;
@@ -348,7 +437,7 @@ Token *lex(char *src) {
             continue;
         }
 
-        // [A-Za-z_][A-Za-z0-9_]*
+        // [a-zA-Z_][a-zA-Z0-9_]*
         if (isalpha((unsigned char)c) || c == '_') {
             size_t s = i;
             while (isalnum((unsigned char)src[i])|| src[i] == '_') i++;
@@ -450,18 +539,22 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    Node *ast = parse(toks);
+    Program prog = parse(toks);
     free(toks);
     free(src);
 
     if (opt_ast) {
-        println_ast(ast);
-        free_ast(ast);
+       for (size_t i = 0; i < prog.len; i++)
+            println_ast(prog.stmts[i]);
+        free_prog(&prog);
         return 0;
     }
 
-    printf("%d\n", eval(ast));
-    free_ast(ast);
+    Env env = { NULL, 0, 0 };
+    int res = 0;
+    for (size_t i = 0; i < prog.len; i++) res = eval(prog.stmts[i], &env);
+    printf("%d\n", res);
 
-    return 0;
+    env_free(&env);
+    free_prog(&prog);
 }
