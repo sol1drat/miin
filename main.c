@@ -40,7 +40,8 @@ typedef enum {
     TK_POW,
     TK_OPA,
     TK_CPA,
-    TK_EOF
+    TK_EOF,
+    TK_EOL
 } TokenType;
 
 typedef struct Node Node;
@@ -161,6 +162,7 @@ void println_toks(Token *toks) {
             case TK_OPA: printf("L%zu  \x1b[1;37mOPA\x1b[0m  (\n", toks[i].line_num); break;
             case TK_CPA: printf("L%zu  \x1b[1;37mCPA\x1b[0m  )\n", toks[i].line_num); break;
             case TK_EQL: printf("L%zu  \x1b[1;37mEQL\x1b[0m  =\n", toks[i].line_num); break;
+            case TK_EOL: printf("L%zu  \x1b[1;37mEOL\x1b[0m  \\n\n", toks[i].line_num); break;
             default: break;
         }
     }
@@ -305,12 +307,20 @@ Program parse(Token *toks) {
     Program prog = { NULL, 0 };
     Parser p = { toks, 0 };
     size_t cap = 0;
-    while (peek(&p)->type != TK_EOF) {
+    for (;;) {
+        while (match(&p, TK_EOL)) continue;
+        if (peek(&p)->type == TK_EOF) break;
+
         if (prog.len == cap) {
             cap = cap * 2 + 8;
             prog.stmts = xrealloc(prog.stmts, cap * sizeof(Node*));
         }
         prog.stmts[prog.len++] = stmt(&p);
+
+        if (!match(&p, TK_EOL)) {
+            expect(&p, TK_EOF);
+            break;
+        }
     }
     return prog;
 }
@@ -432,7 +442,10 @@ Token *lex(char *src) {
         char c = src[i];
 
         if (isspace((unsigned char)c)) {
-            if (c == '\n') line_num++;
+            if (c == '\n') {
+                toks = push_tok(toks, &len, &cap, (Token){ .type = TK_EOL, .line_num = line_num });
+                line_num++;
+            }
             i++;
             continue;
         }
