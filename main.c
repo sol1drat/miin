@@ -1,6 +1,6 @@
 /*
  * program -> stmt* EOF
- * stmt    -> expr ("=" expr)?
+ * stmt    -> "print" expr | expr ("=" expr)?
  * expr    -> mul (("+" | "-") mul)*
  * mul     -> unary (("*" | "/" | "%") unary)*
  * unary   -> ("+" | "-") unary | powr
@@ -16,6 +16,7 @@
 #include <ctype.h>
 
 typedef enum {
+    ND_PRINT,
     ND_VAR,
     ND_ASSIGN,
     ND_INT,
@@ -30,6 +31,7 @@ typedef enum {
 
 typedef enum {
     TK_VAR,
+    TK_PRINT,
     TK_EQL,
     TK_INT,
     TK_ADD,
@@ -64,6 +66,15 @@ typedef struct {
     Token *toks;
     int pos;
 } Parser;
+
+typedef struct {
+    const char *word;
+    TokenType type;
+} Keyword;
+
+const Keyword keywords[] = {
+    { "print", TK_PRINT },
+};
 
 typedef struct {
     char *name;
@@ -107,24 +118,27 @@ char *xstrdup(const char *s) {
 
 const char *type_name(TokenType t) {
     switch (t) {
-        case TK_VAR: return "a variable";
-        case TK_INT: return "a number";
-        case TK_ADD: return "'+'";
-        case TK_SUB: return "'-'";
-        case TK_MUL: return "'*'";
-        case TK_DIV: return "'/'";
-        case TK_MOD: return "'%'";
-        case TK_POW: return "'^'";
-        case TK_OPA: return "'('";
-        case TK_CPA: return "')'";
-        case TK_EQL: return "'='";
-        case TK_EOF: return "end of input";
+        case TK_PRINT: return "'print'";
+        case TK_VAR:   return "a variable";
+        case TK_INT:   return "a number";
+        case TK_ADD:   return "'+'";
+        case TK_SUB:   return "'-'";
+        case TK_MUL:   return "'*'";
+        case TK_DIV:   return "'/'";
+        case TK_MOD:   return "'%'";
+        case TK_POW:   return "'^'";
+        case TK_OPA:   return "'('";
+        case TK_CPA:   return "')'";
+        case TK_EQL:   return "'='";
+        case TK_EOF:   return "end of input";
+        case TK_EOL:   return "end of line";
         default: return "?";
     }
 }
 
 void print_ast(Node *n) {
     switch (n->type) {
+        case ND_PRINT:  printf("(print "); print_ast(n->lhs); printf(")"); return;
         case ND_VAR:    printf("%s", n->name); return;
         case ND_INT:    printf("%d", n->value); return;
         case ND_ASSIGN: printf("(= "); break;
@@ -163,6 +177,7 @@ void println_toks(Token *toks) {
             case TK_CPA: printf("L%zu  \x1b[1;37mCPA\x1b[0m  )\n", toks[i].line_num); break;
             case TK_EQL: printf("L%zu  \x1b[1;37mEQL\x1b[0m  =\n", toks[i].line_num); break;
             case TK_EOL: printf("L%zu  \x1b[1;37mEOL\x1b[0m  \\n\n", toks[i].line_num); break;
+            case TK_PRINT: printf("L%zu  \x1b[1;37mPRT\x1b[0m  %d\n", toks[i].line_num, toks[i].int_value); break;
             default: break;
         }
     }
@@ -248,6 +263,8 @@ Token *expect(Parser *p, TokenType type) {
 }
 
 Node *stmt(Parser *p) {
+    if (match(p, TK_PRINT))
+        return new_unary(ND_PRINT, expr(p));
     Node *node = expr(p);
     Token *t = peek(p);
     if (t->type != TK_EQL)
@@ -353,6 +370,11 @@ int ipow(int base, int exp) {
 
 int eval(Node *n, Env *env) {
     switch (n->type) {
+        case ND_PRINT: {
+            int value = eval(n->lhs, env);
+            printf("%d\n", value);
+            return value;
+        }
         case ND_INT: return n->value;
         case ND_VAR: {
             Var *v = env_find(env, n->name);
@@ -454,9 +476,18 @@ Token *lex(char *src) {
         if (isalpha((unsigned char)c) || c == '_') {
             size_t s = i;
             while (isalnum((unsigned char)src[i])|| src[i] == '_') i++;
+            size_t n = i-s;
+            TokenType type = TK_VAR;
+            for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+                if (n == strlen(keywords[k].word) &&
+                        memcmp(&src[s], keywords[k].word, n) == 0) {
+                    type = keywords[k].type;
+                    break;
+                }
+            }
             toks = push_tok(toks, &len, &cap, (Token){
-                .type = TK_VAR, .var_value = &src[s],
-                .var_len = i-s, .line_num = line_num
+                .type = type, .var_value = &src[s],
+                .var_len = n, .line_num = line_num
             });
             continue;
         }
@@ -557,17 +588,15 @@ int main(int argc, char *argv[]) {
     free(src);
 
     if (opt_ast) {
-       for (size_t i = 0; i < prog.len; i++)
-            println_ast(prog.stmts[i]);
+        for (size_t i = 0; i < prog.len; i++) println_ast(prog.stmts[i]);
         free_prog(&prog);
         return 0;
     }
 
     Env env = { NULL, 0, 0 };
-    int res = 0;
-    for (size_t i = 0; i < prog.len; i++) res = eval(prog.stmts[i], &env);
-    printf("%d\n", res);
+    for (size_t i = 0; i < prog.len; i++) eval(prog.stmts[i], &env);
 
     env_free(&env);
     free_prog(&prog);
+    return 0;
 }
