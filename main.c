@@ -151,6 +151,7 @@ char *xstrdup(const char *s) {
 
 const char *type_name(TokenType t) {
     switch (t) {
+        case TK_PRINT: return "'print'";
         case TK_TRUE:  return "'true'";
         case TK_FALSE: return "'false'";
         case TK_IF:    return "'if'";
@@ -244,7 +245,7 @@ void println_toks(Token *toks) {
             case TK_LE: printf("L%zu  \x1b[1;37mLE\x1b[0m   '<='\n", toks[i].line_num); break;
             case TK_GE: printf("L%zu  \x1b[1;37mGE\x1b[0m   '>='\n", toks[i].line_num); break;
             case TK_EQ: printf("L%zu  \x1b[1;37mEQ\x1b[0m   '=='\n", toks[i].line_num); break;
-            case TK_NE: printf("L%zu  \x1b[1;37mGE\x1b[0m   '!='\n", toks[i].line_num); break;
+            case TK_NE: printf("L%zu  \x1b[1;37mNE\x1b[0m   '!='\n", toks[i].line_num); break;
             case TK_INT: printf("L%zu  \x1b[1;37mINT\x1b[0m  %d\n", toks[i].line_num, toks[i].int_value); break;
             case TK_ADD: printf("L%zu  \x1b[1;37mADD\x1b[0m  +\n", toks[i].line_num); break;
             case TK_SUB: printf("L%zu  \x1b[1;37mSUB\x1b[0m  -\n", toks[i].line_num); break;
@@ -363,8 +364,12 @@ Node *stmt(Parser *p) {
         Node *cond = cmp(p);
         Node *then_blk = block(p);
         Node *else_blk = NULL;
-        if (match(p, TK_ELSE))
-            else_blk = block(p);
+        if (match(p, TK_ELSE)) {
+            if (peek(p)->type == TK_IF)
+                else_blk = stmt(p);
+            else
+                else_blk = block(p);
+        }
         return new_if(cond, then_blk, else_blk);
     }
     if (match(p, TK_PRINT))
