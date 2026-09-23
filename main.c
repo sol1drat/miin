@@ -1,11 +1,15 @@
 /*
  * program -> stmt* EOF
- * stmt    -> "print" expr | expr ("=" expr)?
+ * stmt    -> "if" cmp block ("else" block)?
+              | "print" cmp
+              | cmp ("=" cmp)?
+ * block   -> "{" stmt* "}"
+ * cmp     -> expr (("==" | "!=" | "<" | "<=" | ">" | ">=") expr)?
  * expr    -> mul (("+" | "-") mul)*
  * mul     -> unary (("*" | "/" | "%") unary)*
  * unary   -> ("+" | "-") unary | powr
  * powr    -> primary ("^" unary)?
- * primary -> "(" expr ")" | NUMBER | IDENT
+ * primary -> "(" cmp ")" | NUMBER | IDENT | "true" | "false"
  */
 
 #include <stddef.h>
@@ -16,6 +20,14 @@
 #include <ctype.h>
 
 typedef enum {
+    ND_IF,
+    ND_BLOCK,
+    ND_EQ,
+    ND_NE,
+    ND_LT,
+    ND_LE,
+    ND_GT,
+    ND_GE,
     ND_PRINT,
     ND_VAR,
     ND_ASSIGN,
@@ -30,8 +42,20 @@ typedef enum {
 } NodeType;
 
 typedef enum {
+    TK_EQ,
+    TK_NE,
+    TK_LT,
+    TK_LE,
+    TK_GT,
+    TK_GE,
+    TK_OB,
+    TK_CB,
     TK_VAR,
     TK_PRINT,
+    TK_TRUE,
+    TK_FALSE,
+    TK_IF,
+    TK_ELSE,
     TK_EQL,
     TK_INT,
     TK_ADD,
@@ -52,6 +76,9 @@ struct Node {
     int value;
     char *name;
     Node *lhs, *rhs;
+    Node *els;
+    Node **body;
+    size_t body_len;
 };
 
 typedef struct {
@@ -74,6 +101,10 @@ typedef struct {
 
 const Keyword keywords[] = {
     { "print", TK_PRINT },
+    { "if", TK_IF},
+    { "else", TK_ELSE},
+    { "true", TK_TRUE},
+    { "false", TK_FALSE},
 };
 
 typedef struct {
@@ -93,6 +124,8 @@ typedef struct {
 
 Node *expr(Parser *p);
 Node *stmt(Parser *p);
+Node *cmp(Parser *p);
+Node *block(Parser *p);
 Node *mul(Parser *p);
 Node *unary(Parser *p);
 Node *powr(Parser *p);
@@ -118,7 +151,18 @@ char *xstrdup(const char *s) {
 
 const char *type_name(TokenType t) {
     switch (t) {
-        case TK_PRINT: return "'print'";
+        case TK_TRUE:  return "'true'";
+        case TK_FALSE: return "'false'";
+        case TK_IF:    return "'if'";
+        case TK_ELSE:  return "'else'";
+        case TK_LT:    return "'<'";
+        case TK_GT:    return "'>'";
+        case TK_OB:    return "'{'";
+        case TK_CB:    return "'}'";
+        case TK_EQ:    return "'=='";
+        case TK_NE:    return "'!='";
+        case TK_LE:    return "'<='";
+        case TK_GE:    return "'>='";
         case TK_VAR:   return "a variable";
         case TK_INT:   return "a number";
         case TK_ADD:   return "'+'";
@@ -132,7 +176,7 @@ const char *type_name(TokenType t) {
         case TK_EQL:   return "'='";
         case TK_EOF:   return "end of input";
         case TK_EOL:   return "end of line";
-        default: return "?";
+        default:       return "?";
     }
 }
 
@@ -146,10 +190,33 @@ void print_ast(Node *n) {
         case ND_SUB:    printf("(- "); break;
         case ND_MUL:    printf("(* "); break;
         case ND_DIV:    printf("(/ "); break;
+        case ND_EQ:     printf("(== "); break;
+        case ND_NE:     printf("(!= "); break;
+        case ND_LT:     printf("(< ");  break;
+        case ND_LE:     printf("(<= "); break;
+        case ND_GT:     printf("(> ");  break;
+        case ND_GE:     printf("(>= "); break;
         case ND_MOD:    printf("(%% "); break;
         case ND_POW:    printf("(^ "); break;
         case ND_NEG:    printf("(- "); print_ast(n->lhs); printf(")"); return;
-        default: return;
+        case ND_IF: {
+            printf("(if ");
+            print_ast(n->lhs); printf(" ");
+            print_ast(n->rhs);
+            if (n->els != NULL) { printf(" "); print_ast(n->els); }
+            printf(")");
+            return;
+        }
+        case ND_BLOCK: {
+            printf("(block");
+            for (size_t i = 0; i < n->body_len; i++) {
+                printf(" ");
+                print_ast(n->body[i]);
+            }
+            printf(")");
+            return;
+        }
+        default: abort();
     }
     print_ast(n->lhs);
     printf(" ");
@@ -166,6 +233,18 @@ void println_toks(Token *toks) {
     for (int i = 0; toks[i].type != TK_EOF; i++) {
         switch (toks[i].type) {
             case TK_VAR: printf("L%zu  \x1b[1;37mVAR\x1b[0m  %.*s\n", toks[i].line_num, (int)toks[i].var_len, toks[i].var_value); break;
+            case TK_IF: printf("L%zu  \x1b[1;37mIF\x1b[0m   %.*s\n", toks[i].line_num, (int)toks[i].var_len, toks[i].var_value); break;
+            case TK_ELSE: printf("L%zu  \x1b[1;37mELS\x1b[0m  else\n", toks[i].line_num); break;
+            case TK_TRUE: printf("L%zu  \x1b[1;37mTRU\x1b[0m  true\n", toks[i].line_num); break;
+            case TK_FALSE: printf("L%zu  \x1b[1;37mFAL\x1b[0m  false\n", toks[i].line_num); break;
+            case TK_LT: printf("L%zu  \x1b[1;37mLT\x1b[0m   '<'\n", toks[i].line_num); break;
+            case TK_GT: printf("L%zu  \x1b[1;37mGT\x1b[0m   '>'\n", toks[i].line_num); break;
+            case TK_OB: printf("L%zu  \x1b[1;37mOB\x1b[0m   '{'\n", toks[i].line_num); break;
+            case TK_CB: printf("L%zu  \x1b[1;37mCB\x1b[0m   '}'\n", toks[i].line_num); break;
+            case TK_LE: printf("L%zu  \x1b[1;37mLE\x1b[0m   '<='\n", toks[i].line_num); break;
+            case TK_GE: printf("L%zu  \x1b[1;37mGE\x1b[0m   '>='\n", toks[i].line_num); break;
+            case TK_EQ: printf("L%zu  \x1b[1;37mEQ\x1b[0m   '=='\n", toks[i].line_num); break;
+            case TK_NE: printf("L%zu  \x1b[1;37mGE\x1b[0m   '!='\n", toks[i].line_num); break;
             case TK_INT: printf("L%zu  \x1b[1;37mINT\x1b[0m  %d\n", toks[i].line_num, toks[i].int_value); break;
             case TK_ADD: printf("L%zu  \x1b[1;37mADD\x1b[0m  +\n", toks[i].line_num); break;
             case TK_SUB: printf("L%zu  \x1b[1;37mSUB\x1b[0m  -\n", toks[i].line_num); break;
@@ -177,7 +256,7 @@ void println_toks(Token *toks) {
             case TK_CPA: printf("L%zu  \x1b[1;37mCPA\x1b[0m  )\n", toks[i].line_num); break;
             case TK_EQL: printf("L%zu  \x1b[1;37mEQL\x1b[0m  =\n", toks[i].line_num); break;
             case TK_EOL: printf("L%zu  \x1b[1;37mEOL\x1b[0m  \\n\n", toks[i].line_num); break;
-            case TK_PRINT: printf("L%zu  \x1b[1;37mPRT\x1b[0m  %d\n", toks[i].line_num, toks[i].int_value); break;
+            case TK_PRINT: printf("L%zu  \x1b[1;37mPRT\x1b[0m  %.*s\n", toks[i].line_num, (int)toks[i].var_len, toks[i].var_value); break;
             default: break;
         }
     }
@@ -209,6 +288,23 @@ void env_free(Env *e) {
     for (size_t i = 0; i < e->len; i++)
         free(e->vars[i].name);
     free(e->vars);
+}
+
+Node *new_block(Node **stmts, size_t len) {
+    Node *n = xcalloc(1, sizeof(Node));
+    n->type = ND_BLOCK;
+    n->body = stmts;
+    n->body_len = len;
+    return n;
+}
+
+Node *new_if(Node *cond, Node *then_blk, Node *else_blk) {
+    Node *n = xcalloc(1, sizeof(Node));
+    n->type = ND_IF;
+    n->lhs = cond;
+    n->rhs = then_blk;
+    n->els = else_blk;
+    return n;
 }
 
 Node *new_var(const char *name, size_t len) {
@@ -263,9 +359,17 @@ Token *expect(Parser *p, TokenType type) {
 }
 
 Node *stmt(Parser *p) {
+   if (match(p, TK_IF)) {
+        Node *cond = cmp(p);
+        Node *then_blk = block(p);
+        Node *else_blk = NULL;
+        if (match(p, TK_ELSE))
+            else_blk = block(p);
+        return new_if(cond, then_blk, else_blk);
+    }
     if (match(p, TK_PRINT))
-        return new_unary(ND_PRINT, expr(p));
-    Node *node = expr(p);
+        return new_unary(ND_PRINT, cmp(p));
+    Node *node = cmp(p);
     Token *t = peek(p);
     if (t->type != TK_EQL)
         return node;
@@ -274,7 +378,48 @@ Node *stmt(Parser *p) {
         exit(1);
     }
     p->pos++;
-    return new_binary(ND_ASSIGN, node, expr(p));
+    return new_binary(ND_ASSIGN, node, cmp(p));
+}
+
+Node *cmp(Parser *p) {
+    Node *node = expr(p);
+    TokenType t = peek(p)->type;
+    if (t != TK_EQ && t != TK_NE && t != TK_LT &&
+        t != TK_LE && t != TK_GT && t != TK_GE)
+        return node;
+    p->pos++;
+    NodeType type;
+    switch (t) {
+        case TK_EQ: type = ND_EQ; break;
+        case TK_NE: type = ND_NE; break;
+        case TK_LT: type = ND_LT; break;
+        case TK_LE: type = ND_LE; break;
+        case TK_GT: type = ND_GT; break;
+        default:    type = ND_GE; break;
+    }
+    return new_binary(type, node, expr(p));
+}
+
+Node *block(Parser *p) {
+    expect(p, TK_OB);
+    Node **stmts = NULL;
+    size_t len = 0, cap = 0;
+    for (;;) {
+        while (match(p, TK_EOL));
+        if (match(p, TK_CB)) break;
+
+        if (len == cap) {
+            cap = cap * 2 + 8;
+            stmts = xrealloc(stmts, cap * sizeof(Node *));
+        }
+        stmts[len++] = stmt(p);
+
+        if (!match(p, TK_EOL)) {
+            expect(p, TK_CB);
+            break;
+        }
+    }
+    return new_block(stmts, len);
 }
 
 Node *expr(Parser *p) {
@@ -310,10 +455,12 @@ Node *powr(Parser *p) {
 
 Node *primary(Parser *p) {
     if (match(p, TK_OPA)) {
-        Node *n = expr(p);
+        Node *n = cmp(p);
         expect(p, TK_CPA);
         return n;
     }
+    if (match(p, TK_TRUE))  return new_int(1);
+    if (match(p, TK_FALSE)) return new_int(0);
     Token *t = peek(p);
     if (match(p, TK_VAR)) return new_var(t->var_value, t->var_len);
     t = expect(p, TK_INT);
@@ -346,6 +493,10 @@ void free_ast(Node *n) {
     if (n == NULL) return;
     free_ast(n->lhs);
     free_ast(n->rhs);
+    free_ast(n->els);
+    for (size_t i = 0; i < n->body_len; i++)
+        free_ast(n->body[i]);
+    free(n->body);
     free(n->name);
     free(n);
 }
@@ -370,6 +521,25 @@ int ipow(int base, int exp) {
 
 int eval(Node *n, Env *env) {
     switch (n->type) {
+        case ND_IF: {
+            if (eval(n->lhs, env) != 0)       // truthiness: nonzero = true
+                return eval(n->rhs, env);
+            if (n->els != NULL)
+                return eval(n->els, env);
+            return 0;
+        }
+        case ND_BLOCK: {
+            int result = 0;
+            for (size_t i = 0; i < n->body_len; i++)
+                result = eval(n->body[i], env);
+            return result;
+        }
+        case ND_EQ: return eval(n->lhs, env) == eval(n->rhs, env);
+        case ND_NE: return eval(n->lhs, env) != eval(n->rhs, env);
+        case ND_LT: return eval(n->lhs, env) <  eval(n->rhs, env);
+        case ND_LE: return eval(n->lhs, env) <= eval(n->rhs, env);
+        case ND_GT: return eval(n->lhs, env) >  eval(n->rhs, env);
+        case ND_GE: return eval(n->lhs, env) >= eval(n->rhs, env);
         case ND_PRINT: {
             int value = eval(n->lhs, env);
             printf("%d\n", value);
@@ -501,6 +671,19 @@ Token *lex(char *src) {
             continue;
         }
 
+        if ((c == '=' || c == '!' || c == '<' || c == '>') && src[i + 1] == '=') {
+            TokenType type;
+            switch (c) {
+                case '=': type = TK_EQ; break;   // ==
+                case '!': type = TK_NE; break;   // !=
+                case '<': type = TK_LE; break;   // <=
+                default:  type = TK_GE; break;   // >=
+            }
+            toks = push_tok(toks, &len, &cap, (Token){ .type = type, .line_num = line_num });
+            i += 2;
+            continue;
+        }
+
         TokenType type;
         switch (c) {
             case '+': type = TK_ADD; break;
@@ -512,6 +695,10 @@ Token *lex(char *src) {
             case '(': type = TK_OPA; break;
             case ')': type = TK_CPA; break;
             case '=': type = TK_EQL; break;
+            case '<': type = TK_LT; break;
+            case '>': type = TK_GT; break;
+            case '{': type = TK_OB; break;
+            case '}': type = TK_CB; break;
             default:
                 fprintf(stderr, "\x1b[1;31msyntax error\x1b[0m: invalid character '%c' on line %zu\n", c, line_num);
                 free(toks);
